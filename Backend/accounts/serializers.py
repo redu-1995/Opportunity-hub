@@ -61,3 +61,21 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             last_name=validated_data.get("last_name", ""),
             role=User.Role.MEMBER,
         )
+
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+
+
+class EmailTokenObtainPairSerializer(TokenObtainPairSerializer):
+    """
+    Authenticate users using email and password.
+    Return JWT access and refresh tokens.
+    """
+
+    username_field = User.USERNAME_FIELD
+
+    def validate(self, attrs):
+        attrs[self.username_field] = (
+            attrs[self.username_field].strip().lower()
+        )
+
+        return super().validate(attrs)
