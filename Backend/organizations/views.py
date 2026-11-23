@@ -188,3 +188,77 @@ class OrganizationMembershipApprovalView(APIView):
             response_serializer.data,
             status=status.HTTP_200_OK,
         )
+
+
+class OrganizationMembershipRejectionView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request, pk):
+        try:
+            membership = (
+                OrganizationMember.objects
+                .select_for_update()
+                .select_related("organization", "user")
+                .get(pk=pk)
+            )
+        except OrganizationMember.DoesNotExist:
+            return Response(
+                {"detail": "Membership request not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if membership.user_id == request.user.id:
+            return Response(
+                {"detail": "You cannot reject your own membership request."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if not request.user.is_superuser:
+            can_reject = OrganizationMember.objects.filter(
+                organization=membership.organization,
+                user=request.user,
+                status=OrganizationMember.MembershipStatus.APPROVED,
+                role__in=[
+                    OrganizationMember.MemberRole.OWNER,
+                    OrganizationMember.MemberRole.ADMIN,
+                ],
+            ).exists()
+
+            if not can_reject:
+                return Response(
+                    {
+                        "detail": (
+                            "You are not authorized to reject this request."
+                        )
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+        if membership.status != OrganizationMember.MembershipStatus.PENDING:
+            return Response(
+                {
+                    "detail": (
+                        "Only pending membership requests can be rejected."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        membership.status = OrganizationMember.MembershipStatus.REJECTED
+        membership.reviewed_by = request.user
+        membership.reviewed_at = timezone.now()
+        membership.save(
+            update_fields=[
+                "status",
+                "reviewed_by",
+                "reviewed_at",
+                "updated_at",
+            ]
+        )
+
+        response_serializer = OrganizationMemberSerializer(membership)
+        return Response(
+            response_serializer.data,
+            status=status.HTTP_200_OK,
+        )

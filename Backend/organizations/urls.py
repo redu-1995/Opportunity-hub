@@ -5,6 +5,7 @@ from .views import (
     OrganizationListCreateView,
     OrganizationMembershipApprovalView,
     OrganizationMembershipListView,
+    OrganizationMembershipRejectionView,
     OrganizationMembershipRequestView,
 )
 
@@ -24,6 +25,11 @@ urlpatterns = [
         "memberships/<int:pk>/approve/",
         OrganizationMembershipApprovalView.as_view(),
         name="organization-membership-approve",
+    ),
+    path(
+        "memberships/<int:pk>/reject/",
+        OrganizationMembershipRejectionView.as_view(),
+        name="organization-membership-reject",
     ),
     path(
         "<int:pk>/request-membership/",

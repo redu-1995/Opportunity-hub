@@ -576,3 +576,125 @@ class OrganizationMembershipApprovalAPITests(TestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class OrganizationMembershipRejectionAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.manager = User.objects.create_user(
+            email="manager@example.com",
+            password="StrongPass-2026",
+        )
+        self.requester = User.objects.create_user(
+            email="requester@example.com",
+            password="StrongPass-2026",
+        )
+        self.other_user = User.objects.create_user(
+            email="other@example.com",
+            password="StrongPass-2026",
+        )
+        self.organization = Organization.objects.create(
+            name="Organization One",
+            slug="organization-one",
+            created_by=self.manager,
+        )
+        OrganizationMember.objects.create(
+            organization=self.organization,
+            user=self.manager,
+            role=OrganizationMember.MemberRole.ADMIN,
+            status=OrganizationMember.MembershipStatus.APPROVED,
+        )
+        self.membership = OrganizationMember.objects.create(
+            organization=self.organization,
+            user=self.requester,
+        )
+        self.url = reverse(
+            "organization-membership-reject",
+            args=[self.membership.pk],
+        )
+
+    def test_approved_manager_can_reject_and_is_recorded(self):
+        self.client.force_authenticate(user=self.manager)
+
+        response = self.client.post(self.url, {}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["status"], "REJECTED")
+        self.assertEqual(response.data["role"], "RECRUITER")
+        self.assertEqual(response.data["user_email"], self.requester.email)
+        self.assertEqual(
+            str(response.data["reviewed_by"]),
+            str(self.manager.pk),
+        )
+
+        self.membership.refresh_from_db()
+        self.assertEqual(
+            self.membership.status,
+            OrganizationMember.MembershipStatus.REJECTED,
+        )
+        self.assertEqual(self.membership.reviewed_by, self.manager)
+        self.assertIsNotNone(self.membership.reviewed_at)
+        self.assertIsNone(self.membership.joined_at)
+
+    def test_non_manager_cannot_reject(self):
+        self.client.force_authenticate(user=self.other_user)
+
+        response = self.client.post(self.url, {}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.membership.refresh_from_db()
+        self.assertEqual(
+            self.membership.status,
+            OrganizationMember.MembershipStatus.PENDING,
+        )
+
+    def test_user_cannot_reject_own_membership(self):
+        self.client.force_authenticate(user=self.requester)
+
+        response = self.client.post(self.url, {}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_only_pending_memberships_can_be_rejected(self):
+        self.client.force_authenticate(user=self.manager)
+
+        for reviewed_status in (
+            OrganizationMember.MembershipStatus.APPROVED,
+            OrganizationMember.MembershipStatus.REJECTED,
+        ):
+            with self.subTest(status=reviewed_status):
+                self.membership.status = reviewed_status
+                self.membership.save(update_fields=["status"])
+
+                response = self.client.post(self.url, {}, format="json")
+
+                self.assertEqual(
+                    response.status_code,
+                    status.HTTP_400_BAD_REQUEST,
+                )
+
+    def test_superuser_can_reject(self):
+        superuser = User.objects.create_superuser(
+            email="platform-admin@example.com",
+            password="StrongPass-2026",
+        )
+        self.client.force_authenticate(user=superuser)
+
+        response = self.client.post(self.url, {}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.membership.refresh_from_db()
+        self.assertEqual(self.membership.reviewed_by, superuser)
+
+    def test_missing_membership_returns_not_found(self):
+        self.client.force_authenticate(user=self.manager)
+        url = reverse("organization-membership-reject", args=[9999])
+
+        response = self.client.post(url, {}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_rejection_requires_authentication(self):
+        response = self.client.post(self.url, {}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
