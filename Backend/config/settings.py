@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     # Third-party applications
     "rest_framework",
     "rest_framework_simplejwt",
+    "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
     "django_filters",
     "drf_spectacular",
@@ -146,6 +147,9 @@ STATIC_URL = "static/"
 
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
+
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
@@ -180,6 +184,7 @@ SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
     "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
 

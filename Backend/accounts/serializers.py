@@ -1,10 +1,15 @@
 
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.utils import timezone
 
 from rest_framework import serializers
+from rest_framework_simplejwt.serializers import (
+    TokenObtainPairSerializer,
+    TokenRefreshSerializer,
+)
 
-from .models import User
+from .models import User, UserProfile
 
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
@@ -62,9 +67,6 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             role=User.Role.MEMBER,
         )
 
-from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-
-
 class EmailTokenObtainPairSerializer(TokenObtainPairSerializer):
     """
     Authenticate users using email and password.
@@ -79,3 +81,30 @@ class EmailTokenObtainPairSerializer(TokenObtainPairSerializer):
         )
 
         return super().validate(attrs)
+
+
+class EmailTokenRefreshSerializer(TokenRefreshSerializer):
+    pass
+
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    user = serializers.PrimaryKeyRelatedField(read_only=True)
+
+    class Meta:
+        model = UserProfile
+        fields = [
+            "user",
+            "phone_number",
+            "date_of_birth",
+            "location",
+            "bio",
+            "profile_picture",
+        ]
+        read_only_fields = ["user"]
+
+    def validate_date_of_birth(self, value):
+        if value and value >= timezone.now().date():
+            raise serializers.ValidationError(
+                "Date of birth must be in the past."
+            )
+        return value

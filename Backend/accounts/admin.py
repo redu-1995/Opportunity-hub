@@ -2,7 +2,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 
-from .models import User
+from .models import User, UserProfile
 
 
 @admin.register(User)
@@ -60,3 +60,9 @@ class CustomUserAdmin(UserAdmin):
     )
 
     search_fields = ("email", "first_name", "last_name")
+
+
+@admin.register(UserProfile)
+class UserProfileAdmin(admin.ModelAdmin):
+    list_display = ("user", "phone_number", "location")
+    search_fields = ("user__email", "phone_number", "location")
