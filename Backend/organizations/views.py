@@ -8,6 +8,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from .models import Organization, OrganizationMember
 from .permissions import IsOrganizationManager
 from .serializers import (
+    OrganizationMemberSerializer,
     OrganizationMembershipRequestSerializer,
     OrganizationSerializer,
 )
@@ -66,3 +67,35 @@ class OrganizationMembershipRequestView(generics.CreateAPIView):
             })
 
         serializer.save()
+
+
+class OrganizationMembershipListView(generics.ListAPIView):
+    serializer_class = OrganizationMemberSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+
+        if user.is_superuser:
+            return OrganizationMember.objects.select_related(
+                "organization",
+                "user",
+                "reviewed_by",
+            )
+
+        managed_organizations = OrganizationMember.objects.filter(
+            user=user,
+            status=OrganizationMember.MembershipStatus.APPROVED,
+            role__in=[
+                OrganizationMember.MemberRole.OWNER,
+                OrganizationMember.MemberRole.ADMIN,
+            ],
+        ).values_list("organization_id", flat=True)
+
+        return OrganizationMember.objects.filter(
+            Q(user=user) | Q(organization_id__in=managed_organizations)
+        ).select_related(
+            "organization",
+            "user",
+            "reviewed_by",
+        ).distinct()

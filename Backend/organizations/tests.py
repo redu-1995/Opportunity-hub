@@ -303,3 +303,118 @@ class OrganizationAPITests(TestCase):
                 user=self.other_user,
             ).exists()
         )
+
+
+class OrganizationMembershipListAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.member = User.objects.create_user(
+            email="member@example.com",
+            password="StrongPass-2026",
+        )
+        self.colleague = User.objects.create_user(
+            email="colleague@example.com",
+            password="StrongPass-2026",
+        )
+        self.outsider = User.objects.create_user(
+            email="outsider@example.com",
+            password="StrongPass-2026",
+        )
+        self.organization = Organization.objects.create(
+            name="Organization One",
+            slug="organization-one",
+            created_by=self.member,
+        )
+        self.other_organization = Organization.objects.create(
+            name="Organization Two",
+            slug="organization-two",
+            created_by=self.outsider,
+        )
+        self.url = reverse("organization-membership-list")
+
+    def create_membership(
+        self,
+        organization,
+        user,
+        role=OrganizationMember.MemberRole.RECRUITER,
+        membership_status=OrganizationMember.MembershipStatus.PENDING,
+    ):
+        return OrganizationMember.objects.create(
+            organization=organization,
+            user=user,
+            role=role,
+            status=membership_status,
+        )
+
+    def test_unauthenticated_user_cannot_list_memberships(self):
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_ordinary_member_sees_only_own_memberships(self):
+        own_membership = self.create_membership(
+            self.organization,
+            self.member,
+            role=OrganizationMember.MemberRole.OWNER,
+        )
+        self.create_membership(self.organization, self.colleague)
+        self.create_membership(self.other_organization, self.outsider)
+        self.client.force_authenticate(user=self.member)
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(
+            {item["id"] for item in response.data["results"]},
+            {own_membership.pk},
+        )
+
+    def test_approved_admin_sees_memberships_for_managed_organization(self):
+        manager_membership = self.create_membership(
+            self.organization,
+            self.member,
+            role=OrganizationMember.MemberRole.ADMIN,
+            membership_status=OrganizationMember.MembershipStatus.APPROVED,
+        )
+        coworker_membership = self.create_membership(
+            self.organization,
+            self.colleague,
+        )
+        private_membership = self.create_membership(
+            self.other_organization,
+            self.outsider,
+        )
+        self.client.force_authenticate(user=self.member)
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            {item["id"] for item in response.data["results"]},
+            {manager_membership.pk, coworker_membership.pk},
+        )
+        self.assertNotIn(
+            private_membership.pk,
+            {item["id"] for item in response.data["results"]},
+        )
+
+    def test_superuser_sees_all_memberships(self):
+        first = self.create_membership(self.organization, self.member)
+        second = self.create_membership(
+            self.other_organization,
+            self.outsider,
+        )
+        superuser = User.objects.create_superuser(
+            email="admin@example.com",
+            password="StrongPass-2026",
+        )
+        self.client.force_authenticate(user=superuser)
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            {item["id"] for item in response.data["results"]},
+            {first.pk, second.pk},
+        )
