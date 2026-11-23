@@ -1,5 +1,6 @@
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
 
@@ -698,3 +699,109 @@ class OrganizationMembershipRejectionAPITests(TestCase):
         response = self.client.post(self.url, {}, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class OrganizationMembershipWorkflowTests(TestCase):
+    def test_create_verify_request_and_duplicate_workflow(self):
+        creator = User.objects.create_user(
+            email="creator@example.com",
+            password="StrongPass-2026",
+        )
+        requester = User.objects.create_user(
+            email="requester@example.com",
+            password="StrongPass-2026",
+        )
+        admin = User.objects.create_superuser(
+            email="admin@example.com",
+            password="StrongPass-2026",
+        )
+        client = APIClient()
+
+        client.force_authenticate(user=creator)
+        creation = client.post(
+            reverse("organization-list-create"),
+            {
+                "name": "Workflow Test Organization",
+                "slug": "workflow-test-organization",
+                "organization_type": "COMPANY",
+            },
+            format="json",
+        )
+
+        self.assertEqual(creation.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(creation.data["verification_status"], "PENDING")
+        organization = Organization.objects.get(pk=creation.data["id"])
+        owner_membership = OrganizationMember.objects.get(
+            organization=organization,
+            user=creator,
+        )
+        self.assertEqual(
+            owner_membership.role,
+            OrganizationMember.MemberRole.OWNER,
+        )
+        self.assertEqual(
+            owner_membership.status,
+            OrganizationMember.MembershipStatus.PENDING,
+        )
+
+        reviewed_at = timezone.now()
+        organization.verification_status = (
+            Organization.VerificationStatus.VERIFIED
+        )
+        organization.save(update_fields=["verification_status"])
+        owner_membership.status = OrganizationMember.MembershipStatus.APPROVED
+        owner_membership.reviewed_by = admin
+        owner_membership.reviewed_at = reviewed_at
+        owner_membership.joined_at = reviewed_at
+        owner_membership.save(
+            update_fields=[
+                "status",
+                "reviewed_by",
+                "reviewed_at",
+                "joined_at",
+            ]
+        )
+
+        client.force_authenticate(user=requester)
+        request_url = reverse(
+            "organization-request-membership",
+            args=[organization.pk],
+        )
+        request_response = client.post(
+            request_url,
+            {"organization": organization.pk},
+            format="json",
+        )
+
+        self.assertEqual(
+            request_response.status_code,
+            status.HTTP_201_CREATED,
+        )
+        self.assertEqual(
+            request_response.data,
+            {"organization": organization.pk},
+        )
+        requester_membership = OrganizationMember.objects.get(
+            organization=organization,
+            user=requester,
+        )
+        self.assertEqual(
+            requester_membership.role,
+            OrganizationMember.MemberRole.RECRUITER,
+        )
+        self.assertEqual(
+            requester_membership.status,
+            OrganizationMember.MembershipStatus.PENDING,
+        )
+        self.assertIsNone(requester_membership.reviewed_by)
+        self.assertIsNone(requester_membership.joined_at)
+
+        duplicate_response = client.post(
+            request_url,
+            {"organization": organization.pk},
+            format="json",
+        )
+        self.assertEqual(
+            duplicate_response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
