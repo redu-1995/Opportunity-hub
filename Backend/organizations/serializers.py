@@ -120,3 +120,24 @@ class OrganizationMembershipRequestSerializer(serializers.ModelSerializer):
             role=OrganizationMember.MemberRole.RECRUITER,
             status=OrganizationMember.MembershipStatus.PENDING,
         )
+
+
+class OrganizationMembershipApprovalSerializer(serializers.Serializer):
+    role = serializers.ChoiceField(
+        choices=OrganizationMember.MemberRole.choices,
+        default=OrganizationMember.MemberRole.RECRUITER,
+    )
+
+    def validate_role(self, value):
+        user = self.context["request"].user
+        privileged_roles = [
+            OrganizationMember.MemberRole.OWNER,
+            OrganizationMember.MemberRole.ADMIN,
+        ]
+
+        if not user.is_superuser and value in privileged_roles:
+            raise serializers.ValidationError(
+                "Only platform administrators can assign OWNER or ADMIN roles."
+            )
+
+        return value

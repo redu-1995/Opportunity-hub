@@ -3,6 +3,7 @@ from django.urls import path
 from .views import (
     OrganizationDetailView,
     OrganizationListCreateView,
+    OrganizationMembershipApprovalView,
     OrganizationMembershipListView,
     OrganizationMembershipRequestView,
 )
@@ -18,6 +19,11 @@ urlpatterns = [
         "memberships/",
         OrganizationMembershipListView.as_view(),
         name="organization-membership-list",
+    ),
+    path(
+        "memberships/<int:pk>/approve/",
+        OrganizationMembershipApprovalView.as_view(),
+        name="organization-membership-approve",
     ),
     path(
         "<int:pk>/request-membership/",

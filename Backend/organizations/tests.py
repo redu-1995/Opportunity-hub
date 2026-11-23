@@ -418,3 +418,161 @@ class OrganizationMembershipListAPITests(TestCase):
             {item["id"] for item in response.data["results"]},
             {first.pk, second.pk},
         )
+
+
+class OrganizationMembershipApprovalAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.manager = User.objects.create_user(
+            email="manager@example.com",
+            password="StrongPass-2026",
+        )
+        self.requester = User.objects.create_user(
+            email="requester@example.com",
+            password="StrongPass-2026",
+        )
+        self.other_user = User.objects.create_user(
+            email="other@example.com",
+            password="StrongPass-2026",
+        )
+        self.organization = Organization.objects.create(
+            name="Organization One",
+            slug="organization-one",
+            created_by=self.manager,
+        )
+        OrganizationMember.objects.create(
+            organization=self.organization,
+            user=self.manager,
+            role=OrganizationMember.MemberRole.OWNER,
+            status=OrganizationMember.MembershipStatus.APPROVED,
+        )
+        self.membership = OrganizationMember.objects.create(
+            organization=self.organization,
+            user=self.requester,
+        )
+        self.url = reverse(
+            "organization-membership-approve",
+            args=[self.membership.pk],
+        )
+
+    def test_approved_manager_can_approve_and_is_recorded(self):
+        self.client.force_authenticate(user=self.manager)
+
+        response = self.client.post(
+            self.url,
+            {"role": OrganizationMember.MemberRole.EDITOR},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["role"], "EDITOR")
+        self.assertEqual(response.data["status"], "APPROVED")
+        self.assertEqual(response.data["user_email"], self.requester.email)
+        self.assertEqual(
+            str(response.data["reviewed_by"]),
+            str(self.manager.pk),
+        )
+        self.assertEqual(
+            response.data["organization_name"],
+            self.organization.name,
+        )
+
+        self.membership.refresh_from_db()
+        self.assertEqual(self.membership.reviewed_by, self.manager)
+        self.assertIsNotNone(self.membership.reviewed_at)
+        self.assertIsNotNone(self.membership.joined_at)
+        self.assertEqual(
+            self.membership.reviewed_at,
+            self.membership.joined_at,
+        )
+
+    def test_non_manager_cannot_approve(self):
+        self.client.force_authenticate(user=self.other_user)
+
+        response = self.client.post(
+            self.url,
+            {"role": OrganizationMember.MemberRole.RECRUITER},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.membership.refresh_from_db()
+        self.assertEqual(
+            self.membership.status,
+            OrganizationMember.MembershipStatus.PENDING,
+        )
+
+    def test_user_cannot_approve_own_membership(self):
+        self.client.force_authenticate(user=self.requester)
+
+        response = self.client.post(
+            self.url,
+            {"role": OrganizationMember.MemberRole.RECRUITER},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_manager_cannot_assign_privileged_role(self):
+        self.client.force_authenticate(user=self.manager)
+
+        response = self.client.post(
+            self.url,
+            {"role": OrganizationMember.MemberRole.ADMIN},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.membership.refresh_from_db()
+        self.assertEqual(
+            self.membership.status,
+            OrganizationMember.MembershipStatus.PENDING,
+        )
+
+    def test_superuser_can_assign_privileged_role(self):
+        superuser = User.objects.create_superuser(
+            email="platform-admin@example.com",
+            password="StrongPass-2026",
+        )
+        self.client.force_authenticate(user=superuser)
+
+        response = self.client.post(
+            self.url,
+            {"role": OrganizationMember.MemberRole.ADMIN},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["role"], "ADMIN")
+        self.membership.refresh_from_db()
+        self.assertEqual(self.membership.reviewed_by, superuser)
+
+    def test_approval_requires_pending_membership(self):
+        self.membership.status = OrganizationMember.MembershipStatus.REJECTED
+        self.membership.save(update_fields=["status"])
+        self.client.force_authenticate(user=self.manager)
+
+        response = self.client.post(
+            self.url,
+            {"role": OrganizationMember.MemberRole.RECRUITER},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_missing_membership_returns_not_found(self):
+        self.client.force_authenticate(user=self.manager)
+        url = reverse("organization-membership-approve", args=[9999])
+
+        response = self.client.post(url, {}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_approval_requires_authentication(self):
+        response = self.client.post(
+            self.url,
+            {"role": OrganizationMember.MemberRole.RECRUITER},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
