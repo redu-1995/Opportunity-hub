@@ -146,3 +146,160 @@ class OrganizationAPITests(TestCase):
         self.assertEqual(allowed.status_code, status.HTTP_200_OK)
         organization.refresh_from_db()
         self.assertEqual(organization.description, "Approved change")
+
+    def create_verified_organization(self, slug="verified-organization"):
+        return Organization.objects.create(
+            name="Verified Organization",
+            slug=slug,
+            verification_status=Organization.VerificationStatus.VERIFIED,
+            created_by=self.user,
+        )
+
+    def test_authenticated_user_can_request_membership(self):
+        organization = self.create_verified_organization()
+        self.client.force_authenticate(user=self.other_user)
+
+        response = self.client.post(
+            reverse(
+                "organization-request-membership",
+                args=[organization.pk],
+            ),
+            {"organization": organization.pk},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(
+            response.data,
+            {"organization": organization.pk},
+        )
+        membership = OrganizationMember.objects.get(
+            organization=organization,
+            user=self.other_user,
+        )
+        self.assertEqual(
+            membership.role,
+            OrganizationMember.MemberRole.RECRUITER,
+        )
+        self.assertEqual(
+            membership.status,
+            OrganizationMember.MembershipStatus.PENDING,
+        )
+        self.assertIsNone(membership.reviewed_by)
+        self.assertIsNone(membership.reviewed_at)
+
+    def test_membership_request_requires_authentication(self):
+        organization = self.create_verified_organization()
+
+        response = self.client.post(
+            reverse(
+                "organization-request-membership",
+                args=[organization.pk],
+            ),
+            {"organization": organization.pk},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_membership_request_rejects_unverified_organization(self):
+        organization = Organization.objects.create(
+            name="Pending Organization",
+            slug="pending-organization",
+            created_by=self.user,
+        )
+        self.client.force_authenticate(user=self.other_user)
+
+        response = self.client.post(
+            reverse(
+                "organization-request-membership",
+                args=[organization.pk],
+            ),
+            {"organization": organization.pk},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(
+            OrganizationMember.objects.filter(
+                organization=organization,
+                user=self.other_user,
+            ).exists()
+        )
+
+    def test_duplicate_membership_request_is_rejected(self):
+        organization = self.create_verified_organization()
+        OrganizationMember.objects.create(
+            organization=organization,
+            user=self.other_user,
+        )
+        self.client.force_authenticate(user=self.other_user)
+
+        response = self.client.post(
+            reverse(
+                "organization-request-membership",
+                args=[organization.pk],
+            ),
+            {"organization": organization.pk},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_requester_cannot_assign_role_or_status(self):
+        organization = self.create_verified_organization()
+        self.client.force_authenticate(user=self.other_user)
+
+        response = self.client.post(
+            reverse(
+                "organization-request-membership",
+                args=[organization.pk],
+            ),
+            {
+                "organization": organization.pk,
+                "role": OrganizationMember.MemberRole.ADMIN,
+                "status": OrganizationMember.MembershipStatus.APPROVED,
+                "user": str(self.user.pk),
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        membership = OrganizationMember.objects.get(
+            organization=organization,
+            user=self.other_user,
+        )
+        self.assertEqual(
+            membership.role,
+            OrganizationMember.MemberRole.RECRUITER,
+        )
+        self.assertEqual(
+            membership.status,
+            OrganizationMember.MembershipStatus.PENDING,
+        )
+
+    def test_request_organization_must_match_url(self):
+        url_organization = self.create_verified_organization(
+            slug="url-organization",
+        )
+        body_organization = self.create_verified_organization(
+            slug="body-organization",
+        )
+        self.client.force_authenticate(user=self.other_user)
+
+        response = self.client.post(
+            reverse(
+                "organization-request-membership",
+                args=[url_organization.pk],
+            ),
+            {"organization": body_organization.pk},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(
+            OrganizationMember.objects.filter(
+                organization=body_organization,
+                user=self.other_user,
+            ).exists()
+        )

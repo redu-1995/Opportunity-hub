@@ -2,11 +2,15 @@ from django.db import transaction
 from django.db.models import Q
 
 from rest_framework import generics
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 
 from .models import Organization, OrganizationMember
 from .permissions import IsOrganizationManager
-from .serializers import OrganizationSerializer
+from .serializers import (
+    OrganizationMembershipRequestSerializer,
+    OrganizationSerializer,
+)
 
 
 class OrganizationListCreateView(generics.ListCreateAPIView):
@@ -49,4 +53,16 @@ class OrganizationDetailView(generics.RetrieveUpdateAPIView):
 
         return queryset.select_related("created_by")
 
-# Create your views here.
+
+class OrganizationMembershipRequestView(generics.CreateAPIView):
+    serializer_class = OrganizationMembershipRequestSerializer
+    permission_classes = [IsAuthenticated]
+
+    def perform_create(self, serializer):
+        organization = serializer.validated_data["organization"]
+        if organization.pk != int(self.kwargs["pk"]):
+            raise ValidationError({
+                "organization": ["Organization does not match the URL."]
+            })
+
+        serializer.save()
